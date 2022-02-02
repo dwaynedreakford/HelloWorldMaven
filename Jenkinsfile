@@ -1,45 +1,72 @@
-pipeline { 
-    agent any 
+pipeline {
+    agent any
+    environment {
+        PATH="/usr/local/bin:$PATH" 
+        param1="clean compile"
+    }
     stages {
-        stage('Build') { 
+        stage('Pre-Build') {
             steps {
-                withMaven(maven : 'apache-maven-3.6.0'){
-                        sh "mvn clean compile"
-                }
+                sh 'echo "Starting the script"'
+                sh 'printenv'
+                cleanWs()
+                git branch: 'master', url: 'https://github.com/dwaynedreakford/HelloWorldMaven.git'
+                /* sh 'export param1="clean compile"' */
+                sh '''
+                    echo '{
+                     "token": "MyToken",
+                     "createBuildSessionId": true,
+                     "appName": "${JOB_NAME}",
+                     "branchName": "feature/sealight",
+                     "buildName": "${BUILD_NUMBER}",
+                     "packagesIncluded": "*com.kuhniverse.*",
+                     "packagesExcluded": "",
+                     "filesIncluded": "*.class",
+                     "filesExcluded": "*test-classes*",
+                     "recursive": true,
+                     "includeResources": true,
+                     "testStage": "${SUREFIRE_TEST_STAGE}",
+                     "failsafeArgLine": "deploy",
+                     "labId": "${param1}",
+                     "executionType": "full",
+                     "logEnabled": false,
+                     "logDestination": "console",
+                     "logLevel": "off",
+                     "logFolder": "/tmp",
+                     "sealightsJvmParams": {
+                         "sl.scm.provider": "test",
+                         "sl.scm.baseUrl": "https://{dns}/projects/{project}/repos/{repo}/browse",
+                         "sl.scm.version": "4.9.0"},
+                     "enabled": true
+                }' > slmaven.json
+                '''
+            }
+        }
+        stage('Build') {
+            steps {
+                sh'''
+                    labId=$(cat slmaven.json | envsubst | jq -r '.labId')
+                    echo ${labId}
+                    mvn ${labId}
+                '''
             }
         }
         stage('Test'){
             steps {
-                withMaven(maven : 'apache-maven-3.6.0'){
-                        sh "mvn test"
-                }
-
+                sh '''
+                        provider=$(cat slmaven.json | envsubst | jq -r '."sealightsJvmParams"."sl.scm.provider"')
+                    mvn ${provider}
+                '''
             }
         }
-        stage('build && SonarQube analysis') {
-            steps {
-                withSonarQubeEnv('sonar.tools.devops.****') {
-                    sh 'sonar-scanner -Dsonar.projectKey=myProject -Dsonar.sources=./src'
-                }
-            }
-        }
-        stage("Quality Gate") {
-            steps {
-                timeout(time: 1, unit: 'HOURS') {
-                    // Parameter indicates whether to set pipeline to UNSTABLE if Quality Gate fails
-                    // true = set pipeline to UNSTABLE, false = don't
-                    // Requires SonarScanner for Jenkins 2.7+
-                    waitForQualityGate abortPipeline: true
-                }
-            }
-			}
         stage('Deploy') {
             steps {
-               withMaven(maven : 'apache-maven-3.6.0'){
-                        sh "mvn deploy"
-                }
-
+               sh'''
+                    arg=$(cat slmaven.json | envsubst |jq -r '.failsafeArgLine')
+                    echo "can deploy using command: mvn ${arg}"
+                '''
             }
         }
     }
 }
+
